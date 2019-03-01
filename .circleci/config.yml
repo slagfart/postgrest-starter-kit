@@ -70,18 +70,6 @@ jobs:
           name: run tests
           command: npm test
   
-  deploy:
-    machine:
-      enabled: true
-    steps:
-      - checkout
-   
-      - deploy:
-          name: login to aws docker repo
-          command: aws ecr get-login --no-include-email --region $AWS_DEFAULT_REGION | sh
-         
-
-  
 workflows:
   version: 2
   build-and-deploy:
