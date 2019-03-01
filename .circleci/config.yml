@@ -1,0 +1,112 @@
+version: 2
+jobs:
+  pull_docker_images:
+    docker:
+      - image: circleci/node:latest
+    steps:
+      - restore_cache:
+          keys:
+          - v5-docker-images
+      - setup_remote_docker
+      - run:
+          name: docker pull & save images for testing
+          command: |            
+            if [ ! -f ~/.docker/images.tar ]; then
+              mkdir -p ~/.docker
+              docker pull postgres
+              docker pull lren/pgtap
+              docker pull subzerocloud/postgrest
+              docker pull openresty/openresty:jessie
+              docker pull subzerocloud/amqptools
+              docker save --output ~/.docker/images.tar \
+                postgres \
+                subzerocloud/postgrest \
+                lren/pgtap \
+                openresty/openresty:jessie \
+                subzerocloud/amqptools
+            fi
+      - save_cache:
+          paths:
+            - ~/.docker
+          key: v5-docker-images
+
+  install_npm_dependencies:
+    docker:
+      - image: circleci/node:latest
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+          - v2-npm-dependencies-{{ checksum "package.json" }}
+      - run: npm install
+      - save_cache:
+          paths:
+            - node_modules
+          key: v2-npm-dependencies-{{ checksum "package.json" }}
+  test:
+    machine:
+      enabled: true
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+          - v5-docker-images
+      - restore_cache:
+          keys:
+          - v2-npm-dependencies-{{ checksum "package.json" }}
+      - run:
+          name: load cached docker images
+          command: |
+            docker load --input ~/.docker/images.tar
+      - run:
+         name: bring up application stack
+         command: |
+            # echo manual | sudo tee /etc/init/postgresql.override
+            # sudo service postgresql stop
+            # while sudo lsof -Pi :5432 -sTCP:LISTEN -t; do sleep 1; done
+            docker-compose up -d db postgrest openresty
+            sleep 10
+      - run:
+          name: run tests
+          command: npm test
+  
+  deploy:
+    machine:
+      enabled: true
+    steps:
+      - checkout
+   
+      - deploy:
+          name: login to aws docker repo
+          command: aws ecr get-login --no-include-email --region $AWS_DEFAULT_REGION | sh
+         
+
+  
+workflows:
+  version: 2
+  build-and-deploy:
+    jobs:
+      - pull_docker_images:
+          filters:
+            tags:
+              only: /v[0-9]+(\.[0-9]+)*/
+      - install_npm_dependencies:
+          filters:
+            tags:
+              only: /v[0-9]+(\.[0-9]+)*/
+      - test:
+          filters:
+            tags:
+              only: /v[0-9]+(\.[0-9]+)*/
+          requires:
+            - pull_docker_images
+            - install_npm_dependencies
+      - deploy:
+          requires:
+            - test
+          filters:
+            tags:
+              only: /v[0-9]+(\.[0-9]+)*/
+            branches:
+              ignore: /.*/
+
